@@ -33,7 +33,7 @@ export interface Strategy {
   };
   position_sizing: {
     mode: string;
-    bet_percent: number; // Changed from usd_per_trade
+    bet_percent: number;
     max_open_positions: number;
   };
   stop_loss: {
@@ -61,8 +61,8 @@ export interface Strategy {
 }
 
 export interface Token {
-  address: string; // Pair address for DexScreener
-  tokenAddress: string; // The actual token mint address
+  address: string;
+  tokenAddress: string;
   ticker: string;
   name: string;
   liquidity: number;
@@ -73,10 +73,10 @@ export interface Token {
   image_url: string;
   price_change_5m: number;
   price_usd: number;
-  top_holder_pct: number; // Simulated in frontend prototype
-  mint_auth_revoked: boolean; // Simulated in frontend prototype
-  freeze_auth_revoked: boolean; // Simulated in frontend prototype
-  url: string; // DexScreener URL
+  top_holder_pct: number;
+  mint_auth_revoked: boolean;
+  freeze_auth_revoked: boolean;
+  url: string;
 }
 
 export interface Position {
@@ -97,6 +97,8 @@ export interface TradeRecord {
   token_url: string; 
   entry_price: number;
   exit_price: number;
+  sell_value_usd: number; // Amount obtained from sale
+  sell_percent_chunk: number; // % of position sold (e.g. 50% or 100%)
   pnl_usd: number;
   pnl_percent: number;
   closed_at: number;

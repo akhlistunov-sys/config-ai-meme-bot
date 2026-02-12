@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Token, Position, TradeRecord } from '../types';
 import { formatCompact, formatCurrency } from '../utils';
-import { XCircle, ExternalLink, Activity, AlertTriangle, TrendingUp, History, Wallet, DollarSign } from 'lucide-react';
+import { XCircle, ExternalLink, Activity, AlertTriangle, TrendingUp, History, Wallet, DollarSign, Trophy, LineChart } from 'lucide-react';
 
 interface LiveTerminalProps {
   scannedTokens: Token[];
@@ -10,9 +10,11 @@ interface LiveTerminalProps {
   freeCash: number;
   onPanicSell: (id: string) => void;
   isRunning: boolean;
+  winRate: number;
+  totalRealizedPnL: number;
 }
 
-const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, history, freeCash, onPanicSell, isRunning }) => {
+const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, history, freeCash, onPanicSell, isRunning, winRate, totalRealizedPnL }) => {
   const [activeTab, setActiveTab] = useState<'positions' | 'history'>('positions');
 
   // Calculate stats
@@ -27,25 +29,30 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
   return (
     <div className="space-y-6 h-full flex flex-col">
       {/* HUD */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-solana-card p-4 rounded-lg border border-slate-700">
+      <div className="grid grid-cols-6 gap-3">
+        <div className="bg-solana-card p-3 rounded-lg border border-slate-700 col-span-2">
            <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Свободный Кэш</div>
            <div className="text-xl font-mono text-white mt-1">{formatCurrency(freeCash)}</div>
         </div>
-        <div className="bg-solana-card p-4 rounded-lg border border-slate-700">
-           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">В сделках</div>
-           <div className="text-xl font-mono text-slate-300 mt-1">{formatCurrency(investedAmount)}</div>
+        <div className="bg-solana-card p-3 rounded-lg border border-slate-700 col-span-2">
+           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Общий Капитал</div>
+           <div className="text-xl font-mono text-blue-400 mt-1">{formatCurrency(totalEquity)}</div>
         </div>
-        <div className="bg-solana-card p-4 rounded-lg border border-slate-700">
-           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Нереализ. PnL</div>
-           <div className={`text-xl font-mono mt-1 ${totalUnrealizedPnL >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
-             {totalUnrealizedPnL > 0 ? '+' : ''}{formatCurrency(totalUnrealizedPnL)}
+        <div className="bg-solana-card p-3 rounded-lg border border-slate-700 col-span-1">
+           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider flex items-center gap-1">
+             <Trophy size={10} /> Winrate
+           </div>
+           <div className={`text-lg font-mono mt-1 ${winRate >= 50 ? 'text-solana-green' : 'text-yellow-500'}`}>
+             {winRate.toFixed(0)}%
            </div>
         </div>
-        <div className="bg-solana-card p-4 rounded-lg border border-slate-700 relative overflow-hidden">
-           <div className="absolute right-0 top-0 p-2 opacity-10"><Wallet size={40} /></div>
-           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Общий капитал</div>
-           <div className="text-xl font-mono text-blue-400 mt-1">{formatCurrency(totalEquity)}</div>
+         <div className="bg-solana-card p-3 rounded-lg border border-slate-700 col-span-1">
+           <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider flex items-center gap-1">
+             <TrendingUp size={10} /> Profit
+           </div>
+           <div className={`text-lg font-mono mt-1 ${totalRealizedPnL >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
+             {totalRealizedPnL > 0 ? '+' : ''}{totalRealizedPnL.toFixed(2)}
+           </div>
         </div>
       </div>
 
@@ -69,9 +76,9 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
             </div>
          </div>
          
-         <div className="flex-1 overflow-auto p-2">
+         <div className="flex-1 overflow-hidden p-2">
             {activeTab === 'positions' && (
-              <>
+              <div className="h-full overflow-auto">
                 {positions.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-50">
                        <Activity size={48} className="mb-2" />
@@ -144,53 +151,62 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                         )})}
                     </div>
                 )}
-              </>
+              </div>
             )}
 
             {activeTab === 'history' && (
-              <div className="space-y-1">
+              <div className="h-full flex flex-col">
                  {history.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-50">
                        <History size={48} className="mb-2" />
                        <p>История пуста</p>
                     </div>
                  ) : (
-                    <table className="w-full text-left text-xs">
-                        <thead className="text-slate-500 bg-slate-900 sticky top-0">
-                           <tr>
-                              <th className="p-2">Токен</th>
-                              <th className="p-2">Вход</th>
-                              <th className="p-2">Выход</th>
-                              <th className="p-2 text-right">PnL $</th>
-                              <th className="p-2 text-right">PnL %</th>
-                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800">
-                           {history.map(trade => (
-                              <tr key={trade.id} className="hover:bg-slate-800/50">
-                                 <td className="p-2 font-bold text-slate-300">
-                                   <a 
-                                      href={trade.token_url} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1 hover:text-solana-green transition-colors"
-                                   >
-                                     {trade.token_ticker}
-                                     <ExternalLink size={10} className="opacity-50" />
-                                   </a>
-                                 </td>
-                                 <td className="p-2 text-slate-400 font-mono">${trade.entry_price.toFixed(8)}</td>
-                                 <td className="p-2 text-slate-400 font-mono">${trade.exit_price.toFixed(8)}</td>
-                                 <td className={`p-2 text-right font-bold ${trade.pnl_usd >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
-                                    {trade.pnl_usd > 0 ? '+' : ''}{trade.pnl_usd.toFixed(2)}
-                                 </td>
-                                 <td className={`p-2 text-right font-bold ${trade.pnl_percent >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
-                                    {trade.pnl_percent > 0 ? '+' : ''}{trade.pnl_percent.toFixed(1)}%
-                                 </td>
-                              </tr>
-                           ))}
-                        </tbody>
-                    </table>
+                    <div className="flex-1 overflow-auto bg-slate-900 rounded border border-slate-800">
+                      <table className="w-full text-left text-xs relative">
+                          <thead className="text-slate-500 bg-slate-950 sticky top-0 z-10 shadow-lg">
+                            <tr>
+                                <th className="p-3 bg-slate-950">Токен</th>
+                                <th className="p-3 bg-slate-950">Цена Входа</th>
+                                <th className="p-3 bg-slate-950">Цена Выхода</th>
+                                <th className="p-3 bg-slate-950 text-right">Продажа ($)</th>
+                                <th className="p-3 bg-slate-950 text-right">PnL $</th>
+                                <th className="p-3 bg-slate-950 text-right">PnL %</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {history.map(trade => (
+                                <tr key={trade.id} className="hover:bg-slate-800/50 group transition-colors">
+                                  <td className="p-3 font-bold text-slate-300">
+                                    <a 
+                                        href={trade.token_url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1 hover:text-solana-green transition-colors"
+                                    >
+                                      {trade.token_ticker}
+                                      <ExternalLink size={10} className="opacity-50" />
+                                    </a>
+                                  </td>
+                                  <td className="p-3 text-slate-400 font-mono border-r border-slate-800/50">${trade.entry_price.toFixed(8)}</td>
+                                  <td className="p-3 text-slate-400 font-mono border-r border-slate-800/50">${trade.exit_price.toFixed(8)}</td>
+                                  
+                                  <td className="p-3 text-right font-mono text-slate-300 border-r border-slate-800/50">
+                                     <span className="text-[10px] text-slate-500 mr-1">({trade.sell_percent_chunk}%)</span>
+                                     ${trade.sell_value_usd.toFixed(2)}
+                                  </td>
+
+                                  <td className={`p-3 text-right font-bold border-r border-slate-800/50 ${trade.pnl_usd >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
+                                      {trade.pnl_usd > 0 ? '+' : ''}{trade.pnl_usd.toFixed(2)}
+                                  </td>
+                                  <td className={`p-3 text-right font-bold ${trade.pnl_percent >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
+                                      {trade.pnl_percent > 0 ? '+' : ''}{trade.pnl_percent.toFixed(1)}%
+                                  </td>
+                                </tr>
+                            ))}
+                          </tbody>
+                      </table>
+                    </div>
                  )}
               </div>
             )}

@@ -38,7 +38,7 @@ const INITIAL_STRATEGY: Strategy = {
   },
   position_sizing: {
     mode: "percent_equity",
-    bet_percent: 2, // 2% default
+    bet_percent: 2, 
     max_open_positions: 5
   },
   stop_loss: {
@@ -96,13 +96,19 @@ const App: React.FC = () => {
   const scannerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const marketInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Stats Calculation
+  const totalRealizedPnL = history.reduce((acc, h) => acc + h.pnl_usd, 0);
+  const winningTrades = history.filter(h => h.pnl_usd > 0).length;
+  const totalTrades = history.length;
+  const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+
   // --- PERSISTENCE EFFECTS ---
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.STRATEGY, JSON.stringify(strategy)); }, [strategy]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.CASH, freeCash.toString()); }, [freeCash]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.POSITIONS, JSON.stringify(positions)); }, [positions]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(history)); }, [history]);
 
-  // --- SCANNER LOGIC (Real Data) ---
+  // --- SCANNER LOGIC ---
   useEffect(() => {
     const runScanner = async () => {
       const newTokens = await fetchSolanaPairs();
@@ -135,7 +141,7 @@ const App: React.FC = () => {
              const currentEquity = freeCash + positions.reduce((acc, p) => acc + (p.current_price * p.amount_tokens), 0);
              const betAmountUsd = currentEquity * (strategy.position_sizing.bet_percent / 100);
 
-             // 5. Budget check (Min $1 trade to avoid dust issues)
+             // 5. Budget check (Min $1 trade)
              if (freeCash < betAmountUsd || betAmountUsd < 1.0) break;
 
              openPosition(token, betAmountUsd);
@@ -153,7 +159,7 @@ const App: React.FC = () => {
     return () => { if (scannerInterval.current) clearInterval(scannerInterval.current); };
   }, [isRunning, positions, freeCash, strategy, history]);
 
-  // --- MARKET LOGIC (Real Prices) ---
+  // --- MARKET LOGIC ---
   useEffect(() => {
     if (isRunning && positions.length > 0) {
       marketInterval.current = setInterval(async () => {
@@ -185,12 +191,14 @@ const App: React.FC = () => {
 
                 newPos.amount_tokens -= tokensToSellActual;
                 newPos.history.push(`TP_${stepId}`);
+                
+                // Add TP history
+                addHistory(newPos.token, pos.entry_price, newPrice, tradeValue, step.sell_percent, realisedPnL, pnlPct);
              }
            });
 
            if (soldValue > 0) {
              setFreeCash(c => c + soldValue);
-             addHistory(newPos.token, pos.entry_price, newPrice, realisedPnL, pnlPct);
            }
 
            // SL Logic
@@ -200,7 +208,7 @@ const App: React.FC = () => {
               const lossPnL = remainingValue - remainingCost;
 
               setFreeCash(c => c + remainingValue);
-              addHistory(newPos.token, pos.entry_price, newPrice, lossPnL, pnlPct);
+              addHistory(newPos.token, pos.entry_price, newPrice, remainingValue, 100, lossPnL, pnlPct);
               newPos.status = 'CLOSED';
               newPos.amount_tokens = 0;
            }
@@ -240,14 +248,23 @@ const App: React.FC = () => {
     setPositions(prev => [...prev, newPosition]);
   };
 
-  const addHistory = (token: Token, entry: number, exit: number, pnlUsd: number, pnlPct: number) => {
-     // Now we accept pre-calculated pnlUsd to avoid math errors with partial fills
+  const addHistory = (
+      token: Token, 
+      entry: number, 
+      exit: number, 
+      sellValue: number,
+      sellPercent: number,
+      pnlUsd: number, 
+      pnlPct: number
+  ) => {
      const record: TradeRecord = {
        id: Math.random().toString(36),
        token_ticker: token.ticker,
        token_url: token.url, 
        entry_price: entry,
        exit_price: exit,
+       sell_value_usd: sellValue,
+       sell_percent_chunk: sellPercent,
        pnl_usd: pnlUsd,
        pnl_percent: pnlPct,
        closed_at: Date.now()
@@ -256,34 +273,27 @@ const App: React.FC = () => {
   };
 
   const handlePanicSell = (id: string) => {
-    // Immediately find the position to sell
     const pos = positions.find(p => p.id === id);
     if (pos) {
       const cashValue = pos.amount_tokens * pos.current_price;
       const costBasis = pos.amount_tokens * pos.entry_price;
       const pnlUsd = cashValue - costBasis;
       
-      // Update cash
       setFreeCash(b => b + cashValue);
-      
-      // Add to history with correct PnL
-      addHistory(pos.token, pos.entry_price, pos.current_price, pnlUsd, pos.pnl_percent);
-      
-      // Remove from positions immediately
+      addHistory(pos.token, pos.entry_price, pos.current_price, cashValue, 100, pnlUsd, pos.pnl_percent);
       setPositions(prev => prev.filter(p => p.id !== id));
     }
   };
 
   const handleReset = () => {
-    if (window.confirm("Сбросить баланс до $100 и очистить всю историю?")) {
+    if (window.confirm("ПОЛНЫЙ СБРОС: Баланс вернется к $100, история очистится, настройки стратегии будут сброшены. Продолжить?")) {
       setFreeCash(100);
       setPositions([]);
       setHistory([]);
       setScannedTokens([]);
+      setStrategy(INITIAL_STRATEGY); // Full strategy reset
       setIsRunning(false);
-      localStorage.removeItem(STORAGE_KEYS.CASH);
-      localStorage.removeItem(STORAGE_KEYS.POSITIONS);
-      localStorage.removeItem(STORAGE_KEYS.HISTORY);
+      localStorage.clear(); 
     }
   };
 
@@ -337,9 +347,9 @@ const App: React.FC = () => {
                     {!isRunning && (
                       <button 
                         onClick={handleReset}
-                        className="flex items-center gap-2 px-4 py-3 rounded-lg font-bold text-white bg-slate-700 hover:bg-slate-600 transition-colors"
+                        className="flex items-center gap-2 px-4 py-3 rounded-lg font-bold text-white bg-slate-700 hover:bg-slate-600 transition-colors border border-slate-600"
                       >
-                         <Trash2 size={16} /> СБРОС СТРАТЕГИИ
+                         <Trash2 size={16} /> СБРОС СЧЕТА
                       </button>
                     )}
                     
@@ -369,6 +379,8 @@ const App: React.FC = () => {
                  freeCash={freeCash}
                  onPanicSell={handlePanicSell}
                  isRunning={isRunning}
+                 winRate={winRate}
+                 totalRealizedPnL={totalRealizedPnL}
                />
             </div>
         </div>
