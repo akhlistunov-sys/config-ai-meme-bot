@@ -71,8 +71,10 @@ const INITIAL_STRATEGY: Strategy = {
 const App: React.FC = () => {
   // --- STATE INIT WITH LOCAL STORAGE ---
   const [strategy, setStrategy] = useState<Strategy>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.STRATEGY);
-    return saved ? JSON.parse(saved) : INITIAL_STRATEGY;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.STRATEGY);
+      return saved ? JSON.parse(saved) : INITIAL_STRATEGY;
+    } catch (e) { return INITIAL_STRATEGY; }
   });
 
   const [freeCash, setFreeCash] = useState<number>(() => {
@@ -81,13 +83,17 @@ const App: React.FC = () => {
   });
 
   const [positions, setPositions] = useState<Position[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.POSITIONS);
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.POSITIONS);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
   });
 
   const [history, setHistory] = useState<TradeRecord[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.HISTORY);
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.HISTORY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
   });
 
   const [isRunning, setIsRunning] = useState(false);
@@ -112,7 +118,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const runScanner = async () => {
       const newTokens = await fetchSolanaPairs();
-      
       setScannedTokens(newTokens);
 
       if (isRunning) {
@@ -127,22 +132,15 @@ const App: React.FC = () => {
          });
 
          for (const token of candidates) {
-             // 1. Check if we already have this position
              if (positions.find(p => p.token.address === token.address)) continue;
-             
-             // 2. Check History to prevent re-entry
-             const alreadyTraded = history.some(h => h.token_url === token.url || h.token_ticker === token.ticker);
+             const alreadyTraded = history.some(h => h.token_ticker === token.ticker);
              if (alreadyTraded) continue;
-
-             // 3. Max positions check
              if (positions.length >= strategy.position_sizing.max_open_positions) break;
              
-             // 4. Calculate Equity and Bet Size (Percentage based)
              const currentEquity = freeCash + positions.reduce((acc, p) => acc + (p.current_price * p.amount_tokens), 0);
              const betAmountUsd = currentEquity * (strategy.position_sizing.bet_percent / 100);
 
-             // 5. Budget check (Min $1 trade)
-             if (freeCash < betAmountUsd || betAmountUsd < 1.0) break;
+             if (freeCash < betAmountUsd || betAmountUsd < 0.5) break;
 
              openPosition(token, betAmountUsd);
              break; 
@@ -169,7 +167,6 @@ const App: React.FC = () => {
            const pnlPct = ((newPrice - pos.entry_price) / pos.entry_price) * 100;
 
            let newPos = { ...pos, current_price: newPrice, pnl_percent: pnlPct };
-           let soldAmount = 0;
            let soldValue = 0;
            let realisedPnL = 0;
 
@@ -178,22 +175,19 @@ const App: React.FC = () => {
              const stepId = `${step.profit_percent}`;
              if (pnlPct >= step.profit_percent && !newPos.history.includes(`TP_${stepId}`)) {
                 const fraction = step.sell_percent / 100;
-                const tokensToSell = pos.amount_tokens * fraction; 
                 const tokensToSellActual = newPos.amount_tokens * fraction;
                 
                 const tradeValue = tokensToSellActual * newPrice;
                 const tradeCost = tokensToSellActual * pos.entry_price;
                 const tradePnL = tradeValue - tradeCost;
 
-                soldAmount += tokensToSellActual;
                 soldValue += tradeValue;
                 realisedPnL += tradePnL;
 
                 newPos.amount_tokens -= tokensToSellActual;
                 newPos.history.push(`TP_${stepId}`);
                 
-                // Add TP history
-                addHistory(newPos.token, pos.entry_price, newPrice, tradeValue, step.sell_percent, realisedPnL, pnlPct);
+                addHistory(newPos.token, pos.entry_price, newPrice, tradeValue, step.sell_percent, tradePnL, pnlPct);
              }
            });
 
@@ -291,9 +285,11 @@ const App: React.FC = () => {
       setPositions([]);
       setHistory([]);
       setScannedTokens([]);
-      setStrategy(INITIAL_STRATEGY); // Full strategy reset
+      setStrategy({ ...INITIAL_STRATEGY }); // Full strategy reset
       setIsRunning(false);
-      localStorage.clear(); 
+      
+      // Clean up storage carefully
+      Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
     }
   };
 
@@ -347,9 +343,9 @@ const App: React.FC = () => {
                     {!isRunning && (
                       <button 
                         onClick={handleReset}
-                        className="flex items-center gap-2 px-4 py-3 rounded-lg font-bold text-white bg-slate-700 hover:bg-slate-600 transition-colors border border-slate-600"
+                        className="flex items-center gap-2 px-4 py-3 rounded-lg font-bold text-white bg-slate-700 hover:bg-slate-600 transition-colors border border-slate-600 shadow-sm"
                       >
-                         <Trash2 size={16} /> СБРОС СЧЕТА
+                         <Trash2 size={16} /> СБРОС СЧЕТА И СТРАТЕГИИ
                       </button>
                     )}
                     
