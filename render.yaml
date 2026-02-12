@@ -1,8 +1,7 @@
 services:
-  - type: web
+  - type: static
     name: config-ai-meme-bot
     runtime: static
-    repo: https://github.com/ВАШ_ЛОГИН/config-ai-meme-bot
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     headers:
