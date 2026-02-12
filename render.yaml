@@ -2,5 +2,14 @@ services:
   - type: web
     name: config-ai-meme-bot
     runtime: static
+    repo: https://github.com/ВАШ_ЛОГИН/config-ai-meme-bot
     buildCommand: npm install && npm run build
     staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
