@@ -84,6 +84,7 @@ export interface Position {
   token: Token;
   entry_price: number;
   current_price: number;
+  highest_price: number; // Max price reached since entry (for Trailing Stop)
   amount_tokens: number;
   entry_time: number;
   pnl_percent: number;
@@ -97,9 +98,10 @@ export interface TradeRecord {
   token_url: string; 
   entry_price: number;
   exit_price: number;
-  sell_value_usd: number; // Amount obtained from sale
-  sell_percent_chunk: number; // % of position sold (e.g. 50% or 100%)
+  sell_value_usd: number; 
+  sell_percent_chunk: number; 
   pnl_usd: number;
   pnl_percent: number;
+  exit_reason: string; // 'TP', 'SL', 'TIME', 'TRAILING', 'MANUAL'
   closed_at: number;
 }

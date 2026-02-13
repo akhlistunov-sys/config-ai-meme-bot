@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Token, Position, TradeRecord } from '../types';
 import { formatCompact, formatCurrency } from '../utils';
-import { XCircle, ExternalLink, Activity, AlertTriangle, TrendingUp, History, Wallet, DollarSign, Trophy, LineChart } from 'lucide-react';
+import { XCircle, ExternalLink, Activity, AlertTriangle, TrendingUp, History, Wallet, DollarSign, Trophy, LineChart, Clock } from 'lucide-react';
 
 interface LiveTerminalProps {
   scannedTokens: Token[];
@@ -12,10 +12,18 @@ interface LiveTerminalProps {
   isRunning: boolean;
   winRate: number;
   totalRealizedPnL: number;
+  timeLimit: number;
 }
 
-const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, history, freeCash, onPanicSell, isRunning, winRate, totalRealizedPnL }) => {
+const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, history, freeCash, onPanicSell, isRunning, winRate, totalRealizedPnL, timeLimit }) => {
   const [activeTab, setActiveTab] = useState<'positions' | 'history'>('positions');
+  const [now, setNow] = useState(Date.now());
+
+  // Update timer for UI
+  useEffect(() => {
+     const i = setInterval(() => setNow(Date.now()), 1000);
+     return () => clearInterval(i);
+  }, []);
 
   // Calculate stats
   const totalUnrealizedPnL = positions.reduce((acc, pos) => {
@@ -25,6 +33,16 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
   
   const investedAmount = positions.reduce((acc, pos) => acc + (pos.entry_price * pos.amount_tokens), 0);
   const totalEquity = freeCash + investedAmount + totalUnrealizedPnL;
+
+  const getReasonColor = (reason: string) => {
+      switch(reason) {
+          case 'TP': return 'text-solana-green bg-solana-green/10 border-solana-green/20';
+          case 'SL': return 'text-red-500 bg-red-500/10 border-red-500/20';
+          case 'TRAILING': return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
+          case 'TIME': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
+          default: return 'text-slate-400 bg-slate-400/10 border-slate-400/20';
+      }
+  };
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -89,11 +107,29 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                     <div className="space-y-3">
                         {positions.map(pos => {
                             const invested = pos.entry_price * pos.amount_tokens;
+                            const timeAliveMs = now - (pos.entry_time || now);
+                            const timeAliveMins = timeAliveMs / 60000;
+                            const timePct = Math.min((timeAliveMins / timeLimit) * 100, 100);
+                            const minutes = Math.floor(timeAliveMins);
+                            const seconds = Math.floor((timeAliveMs % 60000) / 1000);
+                            
+                            // Safe if profitable
+                            const isSafe = pos.pnl_percent > 0;
+
                             return (
                             <div key={pos.id} className="bg-slate-900/80 rounded p-3 border border-slate-800 relative overflow-hidden group hover:border-slate-600 transition-colors shadow-lg">
+                               {/* Side PnL Bar */}
                                <div className={`absolute left-0 top-0 bottom-0 w-1 ${pos.pnl_percent >= 0 ? 'bg-solana-green shadow-[0_0_10px_#14f195]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
                                
-                               <div className="flex justify-between items-start pl-2">
+                               {/* Time Progress Bar */}
+                               <div className="absolute top-0 left-1 right-0 h-1 bg-slate-800">
+                                  <div 
+                                    className={`h-full transition-all duration-1000 ${isSafe ? 'bg-slate-600 opacity-30' : 'bg-gradient-to-r from-blue-500 to-red-500'}`} 
+                                    style={{ width: `${timePct}%` }}
+                                  ></div>
+                               </div>
+
+                               <div className="flex justify-between items-start pl-2 pt-2">
                                   <div className="flex items-center gap-3">
                                      <img src={pos.token.image_url} className="w-10 h-10 rounded-full bg-slate-800 object-cover border border-slate-700" />
                                      <div>
@@ -108,7 +144,6 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                                               <ExternalLink size={14}/>
                                             </a>
                                         </div>
-                                        <div className="text-xs text-slate-400 max-w-[150px] truncate">{pos.token.name}</div>
                                         <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded w-fit uppercase font-bold">
                                            Invested: <span className="font-mono text-white">${invested.toFixed(2)}</span>
                                         </div>
@@ -125,15 +160,17 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                                </div>
                                
                                <div className="mt-3 flex gap-2 pl-2 items-center">
-                                   <div className="text-[10px] uppercase text-slate-500 font-bold">Entry</div>
-                                   <div className="text-[11px] bg-slate-800/80 px-2 py-0.5 rounded text-slate-300 font-mono">
-                                      ${pos.entry_price.toFixed(8)}
-                                   </div>
-                                   <div className="text-[10px] uppercase text-slate-500 font-bold ml-2">Price</div>
+                                   <div className="text-[10px] uppercase text-slate-500 font-bold">Price</div>
                                    <div className="text-[11px] bg-slate-800/80 px-2 py-0.5 rounded text-slate-300 font-mono">
                                       ${pos.current_price.toFixed(8)}
                                    </div>
                                    
+                                   {/* Timer Display */}
+                                   <div className={`ml-2 text-[10px] font-mono flex items-center gap-1 px-2 py-0.5 rounded border ${isSafe ? 'text-slate-400 border-slate-700 bg-slate-800' : 'text-orange-400 border-orange-900/50 bg-orange-900/10'}`}>
+                                       <Clock size={10} />
+                                       {minutes}m {seconds}s / {timeLimit}m
+                                   </div>
+
                                    <button 
                                      onClick={(e) => {
                                         e.stopPropagation();
@@ -164,11 +201,10 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                           <thead className="text-slate-500 bg-slate-950 sticky top-0 z-10 shadow-md">
                             <tr>
                                 <th className="p-3 bg-slate-950 border-b border-slate-800">Токен</th>
-                                <th className="p-3 bg-slate-950 border-b border-slate-800">Вход</th>
                                 <th className="p-3 bg-slate-950 border-b border-slate-800">Выход</th>
                                 <th className="p-3 bg-slate-950 border-b border-slate-800 text-right">Продажа ($)</th>
                                 <th className="p-3 bg-slate-950 border-b border-slate-800 text-right">PnL $</th>
-                                <th className="p-3 bg-slate-950 border-b border-slate-800 text-right">PnL %</th>
+                                <th className="p-3 bg-slate-950 border-b border-slate-800 text-right">Тип</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/50">
@@ -185,7 +221,6 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
                                       <ExternalLink size={10} className="opacity-30 group-hover:opacity-100" />
                                     </a>
                                   </td>
-                                  <td className="p-3 text-slate-400 font-mono">${trade.entry_price.toFixed(8)}</td>
                                   <td className="p-3 text-slate-400 font-mono">${trade.exit_price.toFixed(8)}</td>
                                   
                                   <td className="p-3 text-right font-mono text-slate-200 bg-slate-800/20">
@@ -195,9 +230,13 @@ const LiveTerminal: React.FC<LiveTerminalProps> = ({ scannedTokens, positions, h
 
                                   <td className={`p-3 text-right font-bold ${trade.pnl_usd >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
                                       {trade.pnl_usd > 0 ? '+' : ''}{trade.pnl_usd.toFixed(2)}
+                                      <div className="text-[9px] opacity-70 font-normal">{trade.pnl_percent.toFixed(1)}%</div>
                                   </td>
-                                  <td className={`p-3 text-right font-bold ${trade.pnl_percent >= 0 ? 'text-solana-green' : 'text-red-500'}`}>
-                                      {trade.pnl_percent > 0 ? '+' : ''}{trade.pnl_percent.toFixed(1)}%
+                                  
+                                  <td className="p-3 text-right">
+                                     <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${getReasonColor(trade.exit_reason || 'MANUAL')}`}>
+                                        {trade.exit_reason || 'MANUAL'}
+                                     </span>
                                   </td>
                                 </tr>
                             ))}

@@ -164,45 +164,96 @@ const App: React.FC = () => {
         const updates = await Promise.all(positions.map(async (pos) => {
            const realPrice = await fetchPairPrice(pos.token.address);
            const newPrice = realPrice || pos.current_price;
+           
+           // TRACK HIGHEST PRICE (High Water Mark)
+           const currentHighest = pos.highest_price || Math.max(pos.entry_price, pos.current_price);
+           const newHighest = Math.max(currentHighest, newPrice);
+           
            const pnlPct = ((newPrice - pos.entry_price) / pos.entry_price) * 100;
+           
+           // Fix for lost entry_time on reload/edit
+           const safeEntryTime = pos.entry_time || Date.now();
+           const timeAliveMins = (Date.now() - safeEntryTime) / 60000;
 
-           let newPos = { ...pos, current_price: newPrice, pnl_percent: pnlPct };
+           let newPos = { 
+               ...pos, 
+               current_price: newPrice, 
+               highest_price: newHighest, 
+               pnl_percent: pnlPct,
+               entry_time: safeEntryTime // ensure it's saved back
+           };
            let soldValue = 0;
            let realisedPnL = 0;
 
-           // TP Logic
-           strategy.take_profit.scale_out.forEach(step => {
-             const stepId = `${step.profit_percent}`;
-             if (pnlPct >= step.profit_percent && !newPos.history.includes(`TP_${stepId}`)) {
-                const fraction = step.sell_percent / 100;
-                const tokensToSellActual = newPos.amount_tokens * fraction;
-                
-                const tradeValue = tokensToSellActual * newPrice;
-                const tradeCost = tokensToSellActual * pos.entry_price;
-                const tradePnL = tradeValue - tradeCost;
-
-                soldValue += tradeValue;
-                realisedPnL += tradePnL;
-
-                newPos.amount_tokens -= tokensToSellActual;
-                newPos.history.push(`TP_${stepId}`);
-                
-                addHistory(newPos.token, pos.entry_price, newPrice, tradeValue, step.sell_percent, tradePnL, pnlPct);
-             }
-           });
-
-           if (soldValue > 0) {
-             setFreeCash(c => c + soldValue);
+           // 1. TRAILING STOP (HIGHEST PRIORITY for protection of profits)
+           if (newPos.status === 'OPEN' && newPos.amount_tokens > 0 && strategy.take_profit.moonbag_trailing_stop_percent > 0) {
+               // Drawdown from ATH
+               const drawdownPct = ((newHighest - newPrice) / newHighest) * 100;
+               
+               if (drawdownPct >= strategy.take_profit.moonbag_trailing_stop_percent) {
+                   const remainingValue = newPos.amount_tokens * newPrice;
+                   const remainingCost = newPos.amount_tokens * pos.entry_price;
+                   const trailPnL = remainingValue - remainingCost;
+                   
+                   setFreeCash(c => c + remainingValue);
+                   addHistory(newPos.token, pos.entry_price, newPrice, remainingValue, 100, trailPnL, pnlPct, 'TRAILING');
+                   
+                   newPos.status = 'CLOSED';
+                   newPos.amount_tokens = 0;
+               }
            }
 
-           // SL Logic
-           if (pnlPct <= -strategy.stop_loss.hard_stop_percent) {
+           // 2. TP Logic (Scale Out)
+           if (newPos.status === 'OPEN') {
+               strategy.take_profit.scale_out.forEach(step => {
+                 const stepId = `${step.profit_percent}`;
+                 if (pnlPct >= step.profit_percent && !newPos.history.includes(`TP_${stepId}`)) {
+                    const fraction = step.sell_percent / 100;
+                    const tokensToSellActual = newPos.amount_tokens * fraction;
+                    
+                    const tradeValue = tokensToSellActual * newPrice;
+                    const tradeCost = tokensToSellActual * pos.entry_price;
+                    const tradePnL = tradeValue - tradeCost;
+
+                    soldValue += tradeValue;
+                    realisedPnL += tradePnL;
+
+                    newPos.amount_tokens -= tokensToSellActual;
+                    newPos.history.push(`TP_${stepId}`);
+                    
+                    addHistory(newPos.token, pos.entry_price, newPrice, tradeValue, step.sell_percent, tradePnL, pnlPct, 'TP');
+                 }
+               });
+
+               if (soldValue > 0) {
+                 setFreeCash(c => c + soldValue);
+               }
+           }
+           
+           // 3. TIME STOP LOGIC (Low Priority - Only for Dead/Losing positions)
+           // Logic: If time exceeded AND PnL is negative (or zero).
+           // If position is in profit, ignore time stop.
+           if (newPos.status === 'OPEN' && strategy.stop_loss.time_stop_minutes > 0 && timeAliveMins >= strategy.stop_loss.time_stop_minutes) {
+              if (pnlPct <= 0) {
+                  const remainingValue = newPos.amount_tokens * newPrice;
+                  const remainingCost = newPos.amount_tokens * pos.entry_price;
+                  const timePnL = remainingValue - remainingCost;
+
+                  setFreeCash(c => c + remainingValue);
+                  addHistory(newPos.token, pos.entry_price, newPrice, remainingValue, 100, timePnL, pnlPct, 'TIME');
+                  newPos.status = 'CLOSED';
+                  newPos.amount_tokens = 0;
+              }
+           }
+
+           // 4. Hard Stop Loss Logic (Catastrophe Protection)
+           if (newPos.status === 'OPEN' && pnlPct <= -strategy.stop_loss.hard_stop_percent) {
               const remainingValue = newPos.amount_tokens * newPrice;
               const remainingCost = newPos.amount_tokens * pos.entry_price;
               const lossPnL = remainingValue - remainingCost;
 
               setFreeCash(c => c + remainingValue);
-              addHistory(newPos.token, pos.entry_price, newPrice, remainingValue, 100, lossPnL, pnlPct);
+              addHistory(newPos.token, pos.entry_price, newPrice, remainingValue, 100, lossPnL, pnlPct, 'SL');
               newPos.status = 'CLOSED';
               newPos.amount_tokens = 0;
            }
@@ -231,6 +282,7 @@ const App: React.FC = () => {
       token,
       entry_price: entryPrice,
       current_price: entryPrice,
+      highest_price: entryPrice, // Init ATH
       amount_tokens: amountTokens,
       entry_time: Date.now(),
       pnl_percent: 0,
@@ -249,7 +301,8 @@ const App: React.FC = () => {
       sellValue: number,
       sellPercent: number,
       pnlUsd: number, 
-      pnlPct: number
+      pnlPct: number,
+      reason: string
   ) => {
      const record: TradeRecord = {
        id: Math.random().toString(36),
@@ -261,6 +314,7 @@ const App: React.FC = () => {
        sell_percent_chunk: sellPercent,
        pnl_usd: pnlUsd,
        pnl_percent: pnlPct,
+       exit_reason: reason,
        closed_at: Date.now()
      };
      setHistory(prev => [record, ...prev]);
@@ -274,7 +328,7 @@ const App: React.FC = () => {
       const pnlUsd = cashValue - costBasis;
       
       setFreeCash(b => b + cashValue);
-      addHistory(pos.token, pos.entry_price, pos.current_price, cashValue, 100, pnlUsd, pos.pnl_percent);
+      addHistory(pos.token, pos.entry_price, pos.current_price, cashValue, 100, pnlUsd, pos.pnl_percent, 'MANUAL');
       setPositions(prev => prev.filter(p => p.id !== id));
     }
   };
@@ -377,6 +431,7 @@ const App: React.FC = () => {
                  isRunning={isRunning}
                  winRate={winRate}
                  totalRealizedPnL={totalRealizedPnL}
+                 timeLimit={strategy.stop_loss.time_stop_minutes}
                />
             </div>
         </div>
